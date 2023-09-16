@@ -53,6 +53,7 @@ def new_modularity(H, A, wdc=hmod.linear):
     H_id = H.incidence_dict
     d = hmod.part2dict(A)
     L = [ [d[i] for i in H_id[x]] for x in H_id ]
+    
 
     ## all same weight
     if uniq:
@@ -165,7 +166,7 @@ class hLouvain:
         self.change_mode = "iter"
         self.d_weights, self.bin_coef = d_weights(self.HG)
         self.total_weight = sum(self.d_weights.values())
-         
+       
 
     def get_detailed_history_phases(self):
         return self.detailed_history_phases
@@ -444,7 +445,7 @@ class hLouvain:
         
         current_alpha = alpha
         A = copy.deepcopy(A1)
-        superneighbors = self._neighboring_clusters(L,D)
+        #superneighbors = self._neighboring_clusters(L,D)
 
         local_length = len(A)
         step = math.ceil(local_length/10)
@@ -459,8 +460,8 @@ class hLouvain:
             # matrix with modularity deltas
             
             M = []       
-            
-            if len(superneighbors[si]) > 1 or c not in superneighbors[si]: #checking only clusters with some neighbors of current supernodes
+            superneighbors = list(set(np.concatenate([[D[v] for v in self.neighbors_dict[w]] for w in sn])))
+            if len(superneighbors) > 1 or c not in superneighbors: #checking only clusters with some neighbors of current supernodes
                 
                 
                 # calculating loss in degree tax for hypergraph when taking vertex si from community c
@@ -491,7 +492,7 @@ class hLouvain:
                 
                 ec_h_loss, ec_2s_loss = self._ec_loss( c, si, wdc=self.hmod_type)
                                 
-                for i in superneighbors[si]:   
+                for i in superneighbors:   
                     if c == i:
                         M.append(0) 
                     else:
@@ -531,13 +532,13 @@ class hLouvain:
                         M.append(self._combined_delta(delta_h, delta_2s, current_alpha))
                 # make a move maximizing the gain 
                 if max(M) > 0:
-                    i = superneighbors[si][np.argmax(M)]
+                    i = superneighbors[np.argmax(M)]
                     for v in list(sn):
                         A[c] = A[c] - {v}
                         A[i] = A[i].union({v})
                         D[v] = i
                     #recalculate neighboring clustes
-                    superneighbors = self._neighboring_clusters(L,D)
+                    #superneighbors = self._neighboring_clusters(L,D)
 
                     self.changes+=1
                     self.new_changes+=1
@@ -616,7 +617,7 @@ class hLouvain:
         
         self.HG.total_volume = self.HGdict["total_volume"]
         # compute neighboring clusters for supernodes
-        superneighbors = self._neighboring_clusters(L,D)
+        #superneighbors = self._neighboring_clusters(L,D)
         # calculate modularity at the phase start
 
         if self.change_mode == "iter":
@@ -706,7 +707,7 @@ class hLouvain:
     #    self.detailed_history_iteration.append(self.iteration)
 
         
-        self.HG.neighbors_dict = self._hg_neigh_dict()
+        self.neighbors_dict = copy.deepcopy(self._hg_neigh_dict())
         q1 = 0
         while True:
             #print('Start phase', self.phase)
