@@ -119,7 +119,7 @@ class Grid_search_hclustering(base_experiment):
 
         Edges = []
         for line in lines:
-            Edges.append(set(line))
+            Edges.append(list(line))
 
         HG = hnx.Hypergraph(dict(enumerate(Edges)), edge_properties = 'dict', node_properties = 'dict',  properties = 'dict')
 

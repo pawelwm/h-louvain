@@ -636,7 +636,7 @@ def load_ABCDH_from_file(filename):
 
     Edges = []
     for line in lines:
-        Edges.append(set(line))
+        Edges.append(list(line))
 
     HG = hnx.Hypergraph(dict(enumerate(Edges)))
 
@@ -646,22 +646,6 @@ def load_ABCDH_from_file(filename):
  
     return HG
 
-
-def load_GoT():
-    ## load the GoT dataset
-    Edges, Names, Weights = pickle.load(open( "../../hypernetx/utils/toys/GoT.pkl", "rb" ))
-    print(len(Names),'nodes and',len(Edges),'edges')
-
-    ## Nodes are represented as strings from '0' to 'n-1'
-    HG = hnx.Hypergraph(dict(enumerate(Edges)))
-    ## add edge weights
-    for e in HG.edges:
-        HG.edges[e].weight = Weights[e]
-    ## add full names
-    for v in HG.nodes:
-        HG.nodes[v].name = Names[v]
-
-    return HG
 
 
 def main():
