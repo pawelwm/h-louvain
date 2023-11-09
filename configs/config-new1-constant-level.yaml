@@ -1,0 +1,22 @@
+search_methods:
+  - method: constant_level
+    number_of_levels: 10
+ # - method: grid-bc
+ # - method: given_alphas
+ #   alphas: [[0.25,0.75,1]] #[[0.0],[0.25],[0.5],[0.75],[1],[0.0,1],[0.25,1],[0.5,1],[0.75,1],[0.0,0.0,1],[0.25,0.25,1],[0.5,0.5,1],[0.75,0.75,1],[0.0,0.25,1],[0.0,0.5,1],[0.0,0.75,1],[0.25,0.5,1],[0.25,0.75,1],[0.5,0.75,1]]
+ #   alphas: [[0.0],[0.25],[0.5],[0.75],[1],[0.5,0.75,1]]
+savefile: "results-300_4more_linear_252_he.csv"
+ground: true
+details: false
+abcd_input: ["results_300_4more_linear_252_he.txt"]#, "results_1000_1s_he.txt", "results_1000_2s_he.txt", "results_1000_3s_he.txt"] #, "results_1000_4m_he.txt", "results_1000_5m_he.txt", "results_1000_6m_he.txt","results_1000_7m_he.txt", "results_1000_8m_he.txt","results_1000_9m_he.txt"]
+gt_abcd_input: ["results_300_4more_linear_252_assign.txt"]#, "results_1000_1s_assign.txt","results_1000_2s_assign.txt","results_1000_3s_assign.txt"] 
+dataset_short_name: ["abcdh-300-4more-linear"]#,"abcdh1000_1s","abcdh1000_2s","abcdh1000_3s"] #,"abcdh1000_4m","abcdh1000_5m","abcdh1000_6m","abcdh1000_7m","abcdh1000_8m","abcdh1000_9m"]
+hmod_type: "linear"
+change_mode: "communities"   
+after_changes: 350
+community_factor: 2.3
+verbosity: false
+#random_seeds: [407] #[123,4546,9090,15612,891]
+random_seeds: [5066]#, 1193, 3867, 8765, 4017, 7241, 1802, 9519, 1008, 9232, 9278, 5313, 150, 4109]
+delta_iteration: 0.00001  #epsilon?
+delta_phase: 0.00001
