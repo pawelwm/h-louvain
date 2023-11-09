@@ -10,13 +10,12 @@ from collections import defaultdict
 import copy
 import math
 import csv
-
-## New proposed implementation for modularity
-
 from collections import Counter
 from scipy.stats import binom 
 from scipy.special import comb
 
+
+#precalculation of d_weights (for purposes of degree tax change calculation)
 
 def d_weights(H):
 
@@ -29,22 +28,29 @@ def d_weights(H):
 
     else:
         m = np.max([H.size(i) for i in H.edges])
-        Ctr = np.repeat(0,1+m)
-        S = 0
+        Ctr2 = np.repeat(0,1+m)
         for e in H.edges:
             w = H.edges[e].weight
-            Ctr[H.size(e)] += w  
+            Ctr2[H.size(e)] += w  
+
+        Ctr = Counter([len(H.edges[e]) for e in H.edges])
+        for k in range(len(Ctr2)):
+            Ctr[k] = Ctr2[k]
     
     
     # 3. compute binomial coeffcients (modularity speed-up)
     bin_coef = {}
+    
     for n in Ctr.keys():
         for k in np.arange(n // 2 + 1, n + 1):
             bin_coef[(n, k)] = comb(n, k, exact=True)
     
     return Ctr, bin_coef
 
-def new_modularity(H, A, wdc=hmod.linear):
+
+#optimized version of modularity calculation for hnx2.0 (credits to F.Theberge)
+
+def h_modularity(H, A, wdc=hmod.linear):
 
     ## all same edge weights?
     uniq = (len(Counter(H.edges.properties['weight']))==1)
@@ -103,15 +109,6 @@ def new_modularity(H, A, wdc=hmod.linear):
                     DT += (Cnt*wdc(d,c)*binom.pmf(c,d,Vol))
         return (EC-DT)/S
 
-def linear(d, c):
-    return c / d if c > d / 2 else 0
-
-def majority(d, c):
-    return 1 if c > d / 2 else 0
-
-def strict(d, c):
-    return 1 if c == d else 0
-
 # calculation of exponential part of binomial
 def bin_ppmf(d, c, p):
     return p**c * (1 - p)**(d - c)
@@ -123,7 +120,7 @@ class hLouvain:
     def __init__(
         self,
         HG,
-        hmod_type = linear,
+        hmod_type = hmod.linear,
         delta_it = 0.00001, 
         delta_phase = 0.00001, 
         random_seed = 123,
@@ -136,19 +133,25 @@ class hLouvain:
         self.random_seed = random_seed
         self.details = details
         self.G = hmod.two_section(HG)
-        self.new_nodes = []
+        self.h_nodes = []
         for e in self.HG.E:
             E = self.HG.E[e]
             for node in E:
-                if node not in self.new_nodes:
-                    self.new_nodes.append(node)
+                if node not in self.h_nodes:
+                    self.h_nodes.append(node)
+    
         self.startHGdict, self.startA = self.build_HG_dict_from_HG()
         self.HGdict = {},
         self.dts = defaultdict(float) #dictionary containing degree taxes for given volumes
+   
         self.changes = 0
         self.communities = len(self.startA)
         self.phase = 1
         self.iteration = 1
+        self.change_mode = "iter"
+        self.d_weights, self.bin_coef = d_weights(self.HG)
+        self.total_weight = sum(self.d_weights.values())
+        # additional logging
         self.phase_history = []
         self.community_history = []
         self.changes_history = []
@@ -163,10 +166,7 @@ class hLouvain:
         self.detailed_history_communities = []
         self.detailed_history_changes = []
         self.detailed_history_opt_fun = []
-        self.change_mode = "iter"
-        self.d_weights, self.bin_coef = d_weights(self.HG)
-        self.total_weight = sum(self.d_weights.values())
-       
+
 
     def get_detailed_history_phases(self):
         return self.detailed_history_phases
@@ -185,8 +185,6 @@ class hLouvain:
 
     def get_detailed_history_opt_fun(self):
         return self.detailed_history_opt_fun
-
-
 
     def get_phase_history(self):
         return self.phase_history
@@ -232,50 +230,22 @@ class hLouvain:
         """
 
         result = {}
-        for v in self.new_nodes:
+        for v in self.h_nodes:
             result[v] = self.HG.neighbors(v)
         return result
 
 
-    def _neighboring_clusters(self, S, P): 
-        """
-        Given a list of sets (supernodes), a dictionary (partition), and given a hypergraph returns 
-        a dictionary with lists of neighbouring clusters indexes for each supernode
-
-        Parameters
-        ----------
-        S : a list of sets
-        P : a partition of the vertices
-        HG : an HNX hypergraph
-
-        Returns
-        -------
-        : dict
-        a dictionary with {supernode: list of neighboring cluster indices}
-        """
-        result = {}
-        for i in range(len(S)):
-            result[i]=[]
-            for v in S[i]:
-                for w in self.HG.neighbors_dict[v]:
-                    result[i].append(P[w])
-            result[i] = list(set(result[i]))
-        return result
-
-
-    #Naive procedure based on full modularity calculation (based on standard functions of hnx and igraph libraries)
-
-    def combined_modularity(self,A, hmod_type=linear, alpha=0.5):
+    def combined_modularity(self,A, hmod_type=hmod.linear, alpha=0.5):
         
         # Exclude empty clusters if exist
         A = [a for a in A if len(a) > 0]
         
         # Calculation of hypergraph modularity (based on hypernetx)
-        hyper = new_modularity(self.HG,A, wdc=hmod_type) # we use linear (default)  - other predifined possibilities are called majority/strict)
+        hyper = h_modularity(self.HG,A, wdc=hmod_type) # we use linear (default)  - other predifined possibilities are called majority/strict)
         
         # Calculation of modularity of 2-section graph (based on iGraph)
         d = hmod.part2dict(A)
-        partition  = [d[i] for i in self.new_nodes]
+        partition  = [d[i] for i in self.h_nodes]
         twosect = self.G.modularity(partition,weights='weight')  # weighting is enabled
         
         return (1-alpha)*twosect+alpha*hyper
@@ -283,20 +253,7 @@ class hLouvain:
 
 
 
-
-    # calculating edge contribution loss when taking supernode s from source community c
-
-
-
-    # wdc weighs calculation for "linear" hypergraph modularity 
-    #def wdc(d, c):
-    #    return c / d if c > d / 2 else 0
-
-
-
-
-
-    def _ec_loss(self, c, s, wdc=linear):
+    def _ec_loss(self, c, s, wdc=hmod.linear):
         
         ec_h = 0  # ec for hypergraph
         ec_2s = 0  #ec for 2section graph
@@ -310,11 +267,11 @@ class hLouvain:
                 new_c = old_c - self.HGdict["v"][s]["e"][e] #updating after taking the supernode     
                 ec_h += w * (wdc(d, old_c)- wdc(d, new_c))
                 ec_2s += w * self.HGdict["v"][s]["e"][e] * new_c/(d-1)
-        return ec_h / self.total_weight, 2*ec_2s / self.HG.total_volume 
+        return ec_h / self.total_weight, 2*ec_2s / self.total_volume 
 
     # calculating edge contribution gain when joinig supernode s to destination community c
 
-    def _ec_gain(self, c, s, wdc=linear):
+    def _ec_gain(self, c, s, wdc=hmod.linear):
         
 
         ec_h = 0
@@ -330,12 +287,12 @@ class hLouvain:
                 ec_h += w * (wdc(d, new_c) - wdc(d, old_c))
                 ec_2s += w * self.HGdict["v"][s]["e"][e] * old_c/(d-1)
         
-        return ec_h / self.total_weight, 2*ec_2s / self.HG.total_volume 
+        return ec_h / self.total_weight, 2*ec_2s / self.total_volume 
 
 
-    def _degree_tax_hyper(self, volume, wdc=linear):
+    def _degree_tax_hyper(self, volume, wdc=hmod.linear):
         
-        volume = volume/self.HG.total_volume
+        volume = volume/self.total_volume
         
         DT = 0
         for d in self.d_weights.keys():
@@ -361,38 +318,39 @@ class hLouvain:
         
         # preparing structures for vertices and initial communities
         
-        for i in range(len(self.HG.nodes)):
+        for i in range(len(self.h_nodes)):
             HGdict["v"][i]={}
-            HGdict["v"][i]["name"] = [self.new_nodes[i]]
+            HGdict["v"][i]["name"] = [self.h_nodes[i]]
             HGdict["v"][i]["e"] = defaultdict(int) #dictionary  edge: edge_dependent_vertex_weight   
             HGdict["v"][i]["strength"]=0   #strength = weigthed degree'
             HGdict["c"][i]={}
             HGdict["c"][i]["e"] = defaultdict(int) #dictionary  edge: edge_dependent_community_weight
             HGdict["c"][i]["strength"]=0
-            A.append({self.new_nodes[i]})
-            name2index[self.new_nodes[i]] = i
+            A.append({self.h_nodes[i]})
+            name2index[self.h_nodes[i]] = i
 
         # preparing structures for edges 
             
         HGdict["e"] = {}
-        edge_dict = self.HG.incidence_dict
+        edge_dict = copy.deepcopy(self.HG.incidence_dict)
         
         HGdict["total_volume"] = 0    # total volume of all vertices             
         HGdict["total_weight"] = sum(self.HG.edges[j].weight for j in self.HG.edges) #sum of edges weights
+        
         for j in range(len(self.HG.edges)):
             HGdict["e"][j] = {}
             HGdict["e"][j]["v"] = defaultdict(int)  #dictionary  vertex: edge_dependent_vertex_weight
-            HGdict["e"][j]["weight"] = self.HG.edges[j].weight
-            HGdict["e"][j]["size"] = self.HG.size(j)
+            HGdict["e"][j]["weight"] = copy.deepcopy(self.HG.edges[j].weight)
+            HGdict["e"][j]["size"] = copy.deepcopy(self.HG.size(j))
             HGdict["e"][j]["volume"] = HGdict["e"][j]["weight"]*HGdict["e"][j]["size"]    
-            for t in self.HG.incidence_dict[j]:
+            for t in edge_dict[j]:
                 HGdict["e"][j]["v"][name2index[t]] += 1 
                 HGdict["v"][name2index[t]]["e"][j] += 1
                 HGdict["c"][name2index[t]]["e"][j] += 1
                 HGdict["v"][name2index[t]]["strength"] += HGdict["e"][j]["weight"]
                 HGdict["c"][name2index[t]]["strength"] += HGdict["e"][j]["weight"]  
                 HGdict["total_volume"] += HGdict["e"][j]["weight"]
-        #print(HGdict)
+
                 
         return HGdict, A
 
@@ -445,12 +403,11 @@ class hLouvain:
         
         current_alpha = alpha
         A = copy.deepcopy(A1)
-        #superneighbors = self._neighboring_clusters(L,D)
 
         local_length = len(A)
         step = math.ceil(local_length/10)
         k = 0
-        #print("Supernodes permuted!")
+        
         for sn in list(np.random.RandomState(seed=self.random_seed).permutation(L)): #permute supernodes (L contains initial partition, so supernodes)
             #check the current cluster number (using the first node in supernode)
             c = D[list(sn)[0]] 
@@ -468,18 +425,7 @@ class hLouvain:
                 vols = self.HGdict["v"][si]["strength"]
                 volc = self.HGdict["c"][c]["strength"]
 
-            #    try:
-            #        dt_h_loss = self.dts[volc]
-            #    except KeyError:
-            #        self.dts[volc] = self._degree_tax_hyper(volc, wdc=self.hmod_type)
-            #        dt_h_loss = self.dts[volc]
-
-            #    try:
-            #        dt_h_loss -= self.dts[volc-vols]
-            #    except KeyError:
-            #        self.dts[volc-vols] = self._degree_tax_hyper(volc - vols, wdc=self.hmod_type)
-            #        dt_h_loss -= self.dts[volc-vols]
-                
+               
 
                 if not self.dts[volc]:
                     self.dts[volc] = self._degree_tax_hyper(volc, wdc=self.hmod_type)
@@ -500,18 +446,6 @@ class hLouvain:
                 
                         voli = self.HGdict["c"][i]["strength"]
                    
-                    #    try:
-                    #        dt_h_gain = self.dts[voli + vols]
-                    #    except KeyError:
-                    #        self.dts[voli + vols] = self._degree_tax_hyper(voli + vols, wdc=self.hmod_type)
-                    #        dt_h_gain = self.dts[voli + vols]
-
-                    #    try:
-                    #        dt_h_gain-= self.dts[voli]
-                    #    except KeyError:
-                    #        self.dts[voli] = self._degree_tax_hyper(voli, wdc=self.hmod_type)
-                    #        dt_h_gain -= self.dts[voli]
-                        
                    
                         if not self.dts[voli]:
                             self.dts[voli] = self._degree_tax_hyper(voli, wdc=self.hmod_type)
@@ -520,9 +454,9 @@ class hLouvain:
                         dt_h_gain = self.dts[voli + vols] - self.dts[voli]
                         
                         # change in degree tax for 2section graph
-                        delta_dt_2s =2*vols*(vols+voli-volc)/(self.HG.total_volume**2)
+                        delta_dt_2s =2*vols*(vols+voli-volc)/(self.total_volume**2)
                         
-                        # gain in edge contribution when joining si to community i
+                        # gains in edge contribution when joining si to community i
                         ec_h_gain, ec_2s_gain = self._ec_gain(i, si, wdc=self.hmod_type)
                         
                         #calulating deltas
@@ -537,8 +471,6 @@ class hLouvain:
                         A[c] = A[c] - {v}
                         A[i] = A[i].union({v})
                         D[v] = i
-                    #recalculate neighboring clustes
-                    #superneighbors = self._neighboring_clusters(L,D)
 
                     self.changes+=1
                     self.new_changes+=1
@@ -553,10 +485,6 @@ class hLouvain:
                             if self.level > len(self.alphas) - 1:
                                 self.alphas.append(self.alphas[-1])
                             current_alpha = self.alphas[self.level]
-                            #print("change alpha from", self.alphas[self.level-1],"to", self.alphas[self.level], "changes", self.changes)
-
-                            #print("communities", self.communities)
-                            #print("changes", self.changes)
                             self.onchange_phase_history.append(self.phase)
                             self.onchange_changes_history.append(self.changes)
                             self.onchange_community_history.append(self.communities)
@@ -570,10 +498,7 @@ class hLouvain:
                             if self.level > len(self.alphas) - 1:
                                 self.alphas.append(self.alphas[-1])
                             current_alpha = self.alphas[self.level]
-                            #print("change alpha from", self.alphas[self.level-1],"to", self.alphas[self.level], "communities", self.communities)
 
-                            #print("communities", self.communities)
-                            #print("changes", self.changes)
                             self.onchange_phase_history.append(self.phase)
                             self.onchange_changes_history.append(self.changes)
                             self.onchange_community_history.append(self.communities)
@@ -604,54 +529,31 @@ class hLouvain:
         
 
 
-    def next_maximization_phase_alphas(self, L):
+    def next_maximization_phase(self, L):
 
-        #print("")
-        #print("START MAXIMIZATION PHASE")
         DL = hmod.part2dict(L)    
-        # copy L to A (the partition to be modified)
-        # L contains initial partition (supernodes)
-        # A will change during the step
         A1 = L[:]  
         D = hmod.part2dict(A1) #current partition as a dictionary (D will change during the phase)
         
-        self.HG.total_volume = self.HGdict["total_volume"]
-        # compute neighboring clusters for supernodes
-        #superneighbors = self._neighboring_clusters(L,D)
-        # calculate modularity at the phase start
+        self.total_volume = self.HGdict["total_volume"]
 
         if self.change_mode == "iter":
             if self.level > len(self.alphas) - 1:
                 self.alphas.append(self.alphas[-1])
         qC = self.combined_modularity(A1, self.hmod_type, self.alphas[self.level])
-        #print("q at phase start:",qC)
-        
-        
-        #self.HG.dts = defaultdict(float) #dictionary containing degree taxes for given volumes
         
         while True:
-         #   print("A1",A1)
+
             q2, A2, D =  self.next_maximization_iteration(L, DL, A1, D, self.alphas[self.level])
-        #   print("level",level, "alpha",alphas[level])
-        #   print("after iteration q2", level, alphas[level], q2)
-        #    print("A10",A1)
-        #    print("A2",A2)
             qC = self.combined_modularity(A1, self.hmod_type, self.alphas[self.level]) 
-        #    print(qC)
-        #    print(q2)
+
 
             if (q2 - qC) < self.delta_it:
-                #print("Phase stoped")
-                #print("communities", self.communities)
-                #print("changes", self.changes)
-                #qC = q2
 
                 self.HGdict, newA = self.node_collapsing(self.HGdict,A2)
-        #       print(qC)
+
                 break
-            #print("Phase continued")
-            #print("communities", self.communities)
-            #print("changes", self.changes)
+
             self.phase_history.append(self.phase)
             self.changes_history.append(self.changes)
             self.community_history.append(self.communities)
@@ -667,7 +569,6 @@ class hLouvain:
                 if self.level > len(self.alphas) - 1:
                     self.alphas.append(self.alphas[-1])
                 
-        #   print("before iteration qC", level, alphas[level], qC)
             A1 = A2
         
         return newA, qC 
@@ -675,7 +576,7 @@ class hLouvain:
 
 
 
-    def combined_louvain_alphas(self,alphas = [1], change_mode = "iter", after_changes = 300, community_factor = 2, random_seed = 1):
+    def h_louvain_community(self,alphas = [1], change_mode = "iter", after_changes = 300, change_frequency = 0.5, random_seed = 1):
 
         A1 = self._setHGDictAndA()
         if random_seed > 1:
@@ -697,24 +598,17 @@ class hLouvain:
         self.alphas = alphas
         self.level = 0
         self.iteration = 1
-        self.community_factor = community_factor
+        self.community_factor = 1/change_frequency
         self.community_threshold = self.communities/self.community_factor
-
-    #    self.detailed_history_opt_fun.append(self.combined_modularity(A1, self.hmod_type, self.alphas[self.level]))
-    #    self.detailed_history_2s.append(self.combined_modularity(A1, self.hmod_type, 0))
-    #    self.detailed_history_hmod.append(self.combined_modularity(A1, self.hmod_type, 1))
-    #    self.detailed_history_communities.append(self.communities)
-    #    self.detailed_history_iteration.append(self.iteration)
 
         
         self.neighbors_dict = copy.deepcopy(self._hg_neigh_dict())
         q1 = 0
         while True:
-            #print('Start phase', self.phase)
-            A2, qnew  = self.next_maximization_phase_alphas(A1)
+            
+            A2, qnew  = self.next_maximization_phase(A1)
             q1 = self.combined_modularity(A1,  self.hmod_type, self.alphas[self.level])
-            #q2 = self.combined_modularity(A2,  self.hmod_type, self.alphas[newlevel]) 
-            #print(len(self.dts))
+            
             A1 = A2
             if (qnew-q1) < self.delta_phase:
                 return A2, qnew, self.alphas[0:self.level+1]
@@ -730,7 +624,7 @@ class hLouvain:
 
                 if self.level > len(self.alphas) - 1:
                     self.alphas.append(self.alphas[-1])
-            #    print(self.level, alphas[self.level-1], alphas[self.level],self.phase,self.changes)
+            
 
 
 def load_ABCDH_from_file(filename):
@@ -749,17 +643,7 @@ def load_ABCDH_from_file(filename):
     print("HG created")
 
     print(len(Edges), "edges")
-    ## pre-compute required quantities
-    HG = hmod.precompute_attributes(HG)
-
-    print("binomials precomputed")
-
-    ## build 2-section
-    #G = hmod.two_section(HG)
-
-
-    #print("2-section created")
-
+ 
     return HG
 
 
@@ -777,10 +661,6 @@ def load_GoT():
     for v in HG.nodes:
         HG.nodes[v].name = Names[v]
 
-    ## compute node strength (add unit weight if unweighted), d-degrees, binomial coefficients
-    HG = hmod.precompute_attributes(HG)
-    ## build 2-section
-    ## G = hmod.two_section(HG)
     return HG
 
 
@@ -788,11 +668,11 @@ def main():
 
 
     HG = load_ABCDH_from_file("results_3000_he.txt")
-    #HG = load_GoT()
+
 
     hL = hLouvain(HG,hmod_type=hmod.linear)
 
-    A, q2, alphas_out = hL.combined_louvain_alphas(alphas = [0.5,1,0.5,0.7,0.8,1], change_mode="communities", community_factor= 2)
+    A, q2, alphas_out = hL.h_louvain_community(alphas = [0.5,1,0.5,0.7,0.8,1], change_mode="communities", change_frequency= 0.5)
         
     print("")
     print("FINAL ANSWER:")
