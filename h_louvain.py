@@ -108,6 +108,184 @@ def h_modularity(H, A, wdc=hmod.linear):
                 for Vol in VolA:
                     DT += (Cnt*wdc(d,c)*binom.pmf(c,d,Vol))
         return (EC-DT)/S
+    
+def _last_step_unweighted(H, A, wdc, delta=0.01):
+
+    qH = h_modularity(H,A,wdc=wdc)
+  #  print('initial qH:',qH)
+
+    ## initialize
+    ctr_sizes = Counter([H.size(i) for i in H.edges])
+    VolA = [sum([H.degree(i) for i in k]) for k in A]
+    VolV = np.sum(VolA)
+    dct_A = hmod.part2dict(A)
+
+    while(True):
+        
+        n_moves = 0
+        for v in list(np.random.permutation(list(H.nodes))):
+
+            dct_A_v = dct_A[v]
+            H_id = [H.incidence_dict[x] for x in H.nodes[v].memberships]
+            L = [ [dct_A[i] for i in x] for x in H_id ]
+            deg_v = H.degree(v)
+
+            ## assume unweighted - EC portion before
+            _ctr = Counter([ (Counter(l).most_common(1)[0][1],len(l)) for l in L])
+            ec = sum([wdc(k[1],k[0])*_ctr[k] for k in _ctr.keys() if k[0] > k[1]/2])
+
+            ## DT portion before
+            dt = 0
+            for d in ctr_sizes.keys():
+                Cnt = ctr_sizes[d]
+                for c in np.arange(int(np.floor(d/2+1)),d+1):
+                    dt += (Cnt*wdc(d,c)*binom.pmf(c,d,VolA[dct_A_v]/VolV)) 
+            
+            ## move it?
+            best = dct_A_v
+            best_del_q = 0
+            best_dt = 0
+            for m in set([i for x in L for i in x])-{dct_A_v}:
+                dct_A[v] = m
+                L = [ [dct_A[i] for i in x] for x in H_id ]
+                ## assume unweighted - EC
+                _ctr = Counter([ (Counter(l).most_common(1)[0][1],len(l)) for l in L])
+                ecp = sum([wdc(k[1],k[0])*_ctr[k] for k in _ctr.keys() if k[0] > k[1]/2])
+                ## DT
+                del_dt = -dt
+                for d in ctr_sizes.keys():
+                    Cnt = ctr_sizes[d]
+                    for c in np.arange(int(np.floor(d/2+1)),d+1):
+                        del_dt -= (Cnt*wdc(d,c)*binom.pmf(c,d,VolA[m]/VolV))
+                        del_dt += (Cnt*wdc(d,c)*binom.pmf(c,d,(VolA[m]+deg_v)/VolV))
+                        del_dt += (Cnt*wdc(d,c)*binom.pmf(c,d,(VolA[dct_A_v]-deg_v)/VolV)) 
+                del_q = ecp-ec-del_dt
+                if del_q > best_del_q:
+                    best_del_q = del_q
+                    best = m
+                    best_dt = del_dt
+            if best_del_q > 0.1: ## this avoids some numerical precision issues
+                n_moves += 1
+                dct_A[v] = best
+                VolA[m] += deg_v
+                VolA[dct_A_v] -= deg_v
+                VolV = np.sum(VolA)
+            else:
+                dct_A[v] = dct_A_v
+        new_qH = h_modularity(H, hmod.dict2part(dct_A), wdc=wdc)    
+     #   print(n_moves,'moves, new qH:',new_qH)
+        if (new_qH-qH) < delta:
+            break
+        else:
+            qH = new_qH
+    return hmod.dict2part(dct_A)
+
+## THIS ASSUMES WEIGHTED H
+def _last_step_weighted(H, A, wdc, delta=0.01):
+
+    qH = h_modularity(H,A,wdc=wdc)
+  #  print('initial qH:',qH)
+    d = hmod.part2dict(A)
+
+    ## initialize
+    ## this is the bottleneck
+    VolA = np.repeat(0,1+np.max(list(d.values())))
+    m = np.max([H.size(i) for i in H.edges])
+    ctr_sizes = np.repeat(0,1+m)
+    S = 0
+    for e in H.edges:
+        w = H.edges[e].weight
+        ctr_sizes[H.size(e)] += w  
+        S += w
+        for v in H.edges[e]:
+            VolA[d[v]] += w 
+    VolV = np.sum(VolA)
+    dct_A = hmod.part2dict(A)
+
+    ## loop
+    while(True):
+        n_moves = 0
+        for v in list(np.random.permutation(list(H.nodes))):
+
+            dct_A_v = dct_A[v]
+            H_id = [H.incidence_dict[x] for x in H.nodes[v].memberships]
+            L = [ [dct_A[i] for i in x] for x in H_id ]
+
+            ## ec portion before move
+            _keys = [ (Counter(l).most_common(1)[0][1],len(l)) for l in L]
+            _vals = [H.edge_props['weight'][x] for x in H.nodes[v].memberships]
+            _df = pd.DataFrame(zip(_keys,_vals), columns=['key','val'])
+            _df = _df.groupby(by='key').sum()
+            ec = sum([ wdc(k[1],k[0])*val[0] for (k,val) in _df.iterrows() if k[0]>k[1]/2 ])
+            str_v = np.sum(_vals) ## weighted degree
+
+            ## DT portion before move
+            dt = 0
+            for d in range(len(ctr_sizes)):
+                Cnt = ctr_sizes[d]
+                for c in np.arange(int(np.floor(d/2+1)),d+1):
+                    dt += (Cnt*wdc(d,c)*binom.pmf(c,d,VolA[dct_A_v]/VolV)) 
+
+
+            ## move it?
+            best = dct_A_v
+            best_del_q = 0
+            best_dt = 0
+            for m in set([i for x in L for i in x])-{dct_A_v}:
+                dct_A[v] = m
+                L = [ [dct_A[i] for i in x] for x in H_id ]
+                ## EC
+                _keys = [ (Counter(l).most_common(1)[0][1],len(l)) for l in L]
+                _vals = [H.edge_props['weight'][x] for x in H.nodes[v].memberships]
+                _df = pd.DataFrame(zip(_keys,_vals), columns=['key','val'])
+                _df = _df.groupby(by='key').sum()
+                ecp = sum([ wdc(k[1],k[0])*val[0] for (k,val) in _df.iterrows() if k[0]>k[1]/2 ])    
+
+
+                ## DT
+                del_dt = -dt
+                for d in range(len(ctr_sizes)):
+                    Cnt = ctr_sizes[d]
+                    for c in np.arange(int(np.floor(d/2+1)),d+1):
+                        del_dt -= (Cnt*wdc(d,c)*binom.pmf(c,d,VolA[m]/VolV))
+                        del_dt += (Cnt*wdc(d,c)*binom.pmf(c,d,(VolA[m]+str_v)/VolV))
+                        del_dt += (Cnt*wdc(d,c)*binom.pmf(c,d,(VolA[dct_A_v]-str_v)/VolV))
+                del_q = ecp-ec-del_dt
+                if del_q > best_del_q:
+                    best_del_q = del_q
+                    best = m
+                    best_dt = del_dt
+
+            if best_del_q > 0.1: ## this avoids some precision issues
+                n_moves += 1
+                dct_A[v] = best
+                VolA[m] += str_v
+                VolA[dct_A_v] -= str_v
+                VolV = np.sum(VolA)
+            else:
+                dct_A[v] = dct_A_v
+
+        new_qH = h_modularity(H, hmod.dict2part(dct_A), wdc=wdc)
+   #     print(n_moves,'moves, new qH:',new_qH)
+        if (new_qH-qH) < delta:
+            break
+        else:
+            qH = new_qH
+    return hmod.dict2part(dct_A)
+
+def last_step(H, A, wdc=hmod.linear, delta=0.01):
+    
+    ## all same edge weights?
+    uniq = (len(Counter(H.edges.properties['weight']))==1)
+
+    if uniq:
+        nls = _last_step_unweighted(H, A, wdc=wdc, delta=delta)
+    else:
+        nls = _last_step_weighted(H, A, wdc=wdc, delta=delta)
+    return nls
+
+
+
 
 # calculation of exponential part of binomial
 def bin_ppmf(d, c, p):
@@ -151,6 +329,7 @@ class hLouvain:
         self.change_mode = "iter"
         self.d_weights, self.bin_coef = d_weights(self.HG)
         self.total_weight = sum(self.d_weights.values())
+        self.forsing_alpha_1 = True
         # additional logging
         self.phase_history = []
         self.community_history = []
@@ -531,9 +710,23 @@ class hLouvain:
 
     def next_maximization_phase(self, L):
 
-        DL = hmod.part2dict(L)    
+       
+        DL = hmod.part2dict(L)
         A1 = L[:]  
-        D = hmod.part2dict(A1) #current partition as a dictionary (D will change during the phase)
+        D = hmod.part2dict(A1) #current partition as a dictionary (D will change during the phase)   
+
+        if self.back == True:
+            L = self.LPrevious
+            self.HGdict = self.HGdictPrevious
+            DL = self.DLPrevious
+            D = self.DPrevious
+            A1 = self.APrevious
+            self.back = False
+        #    print("change")
+
+       # print(len(self.dts))
+  
+        
         
         self.total_volume = self.HGdict["total_volume"]
 
@@ -550,6 +743,13 @@ class hLouvain:
 
             if (q2 - qC) < self.delta_it:
 
+                if self.iteration != 1:
+                    self.HGdictPrevious = copy.deepcopy(self.HGdict)
+                    self.DPrevious = copy.deepcopy(D)
+                    self.APrevious = copy.deepcopy(A2)
+                    self.DLPrevious = DL
+                    self.LPrevious = L
+                 #   print(self.phase,len(A2), len(L))
                 self.HGdict, newA = self.node_collapsing(self.HGdict,A2)
 
                 break
@@ -576,7 +776,7 @@ class hLouvain:
 
 
 
-    def h_louvain_community(self,alphas = [1], change_mode = "iter", after_changes = 300, change_frequency = 0.5, random_seed = 1):
+    def h_louvain_community(self,alphas = [1], change_mode = "communities", after_changes = 300, change_frequency = 0.5, force_alpha_1 = True, random_seed = 1):
 
         A1 = self._setHGDictAndA()
         if random_seed > 1:
@@ -597,21 +797,36 @@ class hLouvain:
         self.after_changes = after_changes
         self.alphas = alphas
         self.level = 0
+        self.forsing_alpha_1 = force_alpha_1
         self.iteration = 1
         self.community_factor = 1/change_frequency
         self.community_threshold = self.communities/self.community_factor
-
+        self.back = False
         
         self.neighbors_dict = copy.deepcopy(self._hg_neigh_dict())
         q1 = 0
         while True:
-            
+            # print("Phase:", self.phase, "alpha", self.alphas[self.level])
+            if self.back == True:
+                A1 = self.LPrevious
             A2, qnew  = self.next_maximization_phase(A1)
             q1 = self.combined_modularity(A1,  self.hmod_type, self.alphas[self.level])
+           # print(self.phase,len(A1),self.alphas[self.level], self.combined_modularity(A2,  self.hmod_type, 1), qnew)
             
             A1 = A2
             if (qnew-q1) < self.delta_phase:
-                return A2, qnew, self.alphas[0:self.level+1]
+                if self.alphas[self.level] == 1 or self.forsing_alpha_1 == False:  # added in order to force checking alpha = 1 at the last step of the process
+                  #  print("alphas",self.alphas)
+                    return A2, qnew, self.alphas[0:self.level+1]
+                else:
+                  #  print("level",self.level)
+                    if self.level > len(self.alphas) - 2:
+                        self.alphas.append(1)
+                    else:
+                        for i  in np.arange(self.level+1, len(self.alphas)):
+                            self.alphas[i] = 1 
+                    self.back = True
+                    self.level+=1
             q1 = qnew
             self.phase+=1
             self.iteration = 1
@@ -624,6 +839,16 @@ class hLouvain:
 
                 if self.level > len(self.alphas) - 1:
                     self.alphas.append(self.alphas[-1])
+
+
+    def h_louvain_community_plus_last_step(self,alphas = [1], change_mode = "communities", after_changes = 300, change_frequency = 0.5,  force_alpha_1 = True, random_seed = 1):
+
+        A_basic, qH_basic, alphas_out = self.h_louvain_community(alphas, change_mode=change_mode, after_changes=after_changes,
+                                                                  change_frequency=change_frequency, force_alpha_1 = force_alpha_1, random_seed=random_seed)
+        A_new = last_step(self.HG, A_basic, self.hmod_type)
+        #qH_new = h_modularity(self.HG,A_new, wdc=self.hmod_type)
+        return A_new, A_basic, alphas_out
+     
             
 
 
