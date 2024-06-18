@@ -9,7 +9,7 @@ import csv
 from collections import Counter
 from scipy.stats import binom 
 
-from h_louvain_utils import last_step
+
 
 
 class hLouvain:
@@ -156,7 +156,7 @@ class hLouvain:
             _df = pd.DataFrame(zip(_keys, _vals), columns=["key", "val"])
             _df = _df.groupby(by="key").sum()
             EC = sum(
-                [wdc[k[1]][k[0]]* v[0] for (k, v) in _df.iterrows() if k[0] > k[1] / 2]
+                [wdc[k[1]][k[0]]* v.iloc[0] for (k, v) in _df.iterrows() if k[0] > k[1] / 2]
             )
 
         ## Degree Tax
@@ -933,7 +933,7 @@ class hLouvain:
                 _vals = [self.HG.edges.properties["weight"][x] for x in self.HG.nodes[v]]
                 _df = pd.DataFrame(zip(_keys,_vals), columns=['key','val'])
                 _df = _df.groupby(by='key').sum()
-                ec = sum([ wdc[k[1]][k[0]]*val[0] for (k,val) in _df.iterrows() if k[0]>k[1]/2 ])
+                ec = sum([ wdc[k[1]][k[0]]*val.iloc[0] for (k,val) in _df.iterrows() if k[0]>k[1]/2 ])
                 str_v = np.sum(_vals) ## weighted degree
 
                 ## DT portion before move
@@ -957,7 +957,7 @@ class hLouvain:
                     _vals = [self.HG.edges.properties["weight"][x] for x in self.HG.nodes[v]]
                     _df = pd.DataFrame(zip(_keys,_vals), columns=['key','val'])
                     _df = _df.groupby(by='key').sum()
-                    ecp = sum([ wdc[k[1]][k[0]]*val[0] for (k,val) in _df.iterrows() if k[0]>k[1]/2 ])    
+                    ecp = sum([ wdc[k[1]][k[0]]*val.iloc[0] for (k,val) in _df.iterrows() if k[0]>k[1]/2 ])    
 
 
                     ## DT
